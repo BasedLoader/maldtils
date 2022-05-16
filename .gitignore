@@ -1,0 +1,4 @@
+tmp/
+.gradle/
+.idea/
+out/
