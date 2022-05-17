@@ -18,7 +18,7 @@ dependencies {
     implementation("net.minecraftforge:ForgeAutoRenamingTool:0.1.17:all") // FIXME: we can prob pull this from mcp config but whatever. Make sure its the same as the version forge wants
 
     // Misc Dependencies
-    implementation("com.google.code.gson:gson:2.9.0")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.13.3")
     implementation("net.fabricmc:mapping-io:0.3.0")
     implementation("net.fabricmc:tiny-remapper:0.8.4")
 

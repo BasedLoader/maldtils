@@ -9,7 +9,7 @@ import java.nio.file.Paths;
 /**
  * TODO: make a version for gradle and urls.
  */
-public class FileResolver {
+public class FilesUtils {
     public static final Path TMP_DIR = Paths.get("tmp");
     public static final boolean IS_OFFLINE = isOffline();
 
@@ -33,6 +33,14 @@ public class FileResolver {
             return forceDownloadFile(url, output);
         }
         return output;
+    }
+
+    public static byte[] unpack(Path zip, String path) {
+        try (FileSystemUtil.Delegate fs = FileSystemUtil.getJarFileSystem(zip, false)) {
+            return fs.readAllBytes(path);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private static boolean isOffline() {

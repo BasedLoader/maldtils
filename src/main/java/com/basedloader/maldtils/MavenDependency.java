@@ -1,6 +1,6 @@
 package com.basedloader.maldtils;
 
-import com.basedloader.maldtils.file.FileResolver;
+import com.basedloader.maldtils.file.FilesUtils;
 import com.basedloader.maldtils.logger.Logger;
 
 import java.io.IOException;
@@ -50,7 +50,7 @@ public record MavenDependency(String group, String name, String version) {
             logger.info("Using Cached " + this);
         }
 
-        return FileResolver.downloadFile(downloadUrlPath, outputFile);
+        return FilesUtils.downloadFile(downloadUrlPath, outputFile);
     }
 
     @Override

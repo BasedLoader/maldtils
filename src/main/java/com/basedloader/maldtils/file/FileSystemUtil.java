@@ -39,6 +39,15 @@ public final class FileSystemUtil {
     private static final Map<String, String> JFS_ARGS_EMPTY = Collections.emptyMap();
 
     public record Delegate(FileSystem fs, boolean owner) implements AutoCloseable, Supplier<FileSystem> {
+        public byte[] readAllBytes(String path) throws IOException {
+            Path fsPath = get().getPath(path);
+
+            if (Files.exists(fsPath)) {
+                return Files.readAllBytes(fsPath);
+            } else {
+                throw new NoSuchFileException(fsPath.toString());
+            }
+        }
 
         @Override
         public void close() throws IOException {
