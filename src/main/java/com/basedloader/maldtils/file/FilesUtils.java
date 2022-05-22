@@ -10,6 +10,7 @@ import java.nio.file.Paths;
  * TODO: make a version for gradle and urls.
  */
 public class FilesUtils {
+    @Deprecated
     public static final Path TMP_DIR = Paths.get("tmp");
     public static final boolean IS_OFFLINE = isOffline();
 

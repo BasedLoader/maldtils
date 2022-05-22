@@ -6,7 +6,9 @@ import com.basedloader.maldtils.logger.Logger;
 import com.basedloader.maldtils.minecraft.VersionMetadata;
 import com.google.common.base.Stopwatch;
 import net.fabricmc.mappingio.MappingReader;
+import net.fabricmc.mappingio.MappingWriter;
 import net.fabricmc.mappingio.adapter.ForwardingMappingVisitor;
+import net.fabricmc.mappingio.format.Tiny2Writer;
 import net.fabricmc.mappingio.tree.MappingTree;
 import net.fabricmc.mappingio.tree.MemoryMappingTree;
 
@@ -21,49 +23,62 @@ import java.util.*;
  */
 public class ForgeMappingProvider {
 
-    public ForgeMappingProvider(VersionMetadata versionMetadata, Path workDir, Logger logger) throws IOException {
-        Path forgeMappings = workDir.resolve("mappings/full.tsrg");
-        Path mergedMojangRaw = workDir.resolve("mappings/merged-raw.txt");
-        Path mcp = workDir.resolve("mappings/mcp.tsrg");
-        Path mojmap = workDir.resolve("mappings/mojmap.txt");
+    public final Path forgeMappings;
+    public final Path forgeMappingsTiny;
 
-        if (!Files.exists(forgeMappings)) {
-            String mcVer = versionMetadata.id();
-            Path mcpConfig = FilesUtils.downloadFile("https://maven.minecraftforge.net/de/oceanlabs/mcp/mcp_config/$it/mcp_config-$it.zip".replace("$it", mcVer), workDir.resolve("mappings/mcp_config-" + mcVer + ".zip"));
-            Files.write(mcp, FilesUtils.unpack(mcpConfig, "config/joined.tsrg"));
-            FilesUtils.downloadFile(versionMetadata.download("client_mappings").url(), mojmap);
+    public ForgeMappingProvider(VersionMetadata versionMetadata, Path workDir, Logger logger) {
+        try {
+            this.forgeMappings = workDir.resolve("mappings/full.tsrg");
+            this.forgeMappingsTiny = workDir.resolve("mappings/full.tiny");
+            Path mergedMojangRaw = workDir.resolve("mappings/merged-raw.txt");
+            Path mcp = workDir.resolve("mappings/mcp.tsrg");
+            Path mojmap = workDir.resolve("mappings/mojmap.txt");
 
-            Stopwatch stopwatch = Stopwatch.createStarted();
-            logger.info(":merging mappings (InstallerTools, srg + mojmap)");
+            if (!Files.exists(forgeMappings) || !Files.exists(forgeMappingsTiny)) {
+                String mcVer = versionMetadata.id();
+                Path mcpConfig = FilesUtils.downloadFile("https://maven.minecraftforge.net/de/oceanlabs/mcp/mcp_config/$it/mcp_config-$it.zip".replace("$it", mcVer), workDir.resolve("mappings/mcp_config-" + mcVer + ".zip"));
+                Files.write(mcp, FilesUtils.unpack(mcpConfig, "config/joined.tsrg"));
+                FilesUtils.downloadFile(versionMetadata.download("client_mappings").url(), mojmap);
 
-            Files.deleteIfExists(mergedMojangRaw);
-            Files.deleteIfExists(forgeMappings);
-            net.minecraftforge.installertools.ConsoleTool.main(new String[]{
-                    "--task",
-                    "MERGE_MAPPING",
-                    "--left",
-                    mcp.toAbsolutePath().toString(),
-                    "--right",
-                    mojmap.toAbsolutePath().toString(),
-                    "--classes",
-                    "--reverse-right",
-                    "--output",
-                    mergedMojangRaw.toAbsolutePath().toString()
-            });
+                Stopwatch stopwatch = Stopwatch.createStarted();
+                logger.info(":merging mappings (InstallerTools, srg + mojmap)");
 
-            MemoryMappingTree mappings = new MemoryMappingTree();
-            MappingReader.read(Files.newBufferedReader(mergedMojangRaw), mappings);
-            mappings.accept(new FieldDescWrappingVisitor(mappings, mojmap));
+                Files.deleteIfExists(mergedMojangRaw);
+                Files.deleteIfExists(forgeMappings);
+                net.minecraftforge.installertools.ConsoleTool.main(new String[]{
+                        "--task",
+                        "MERGE_MAPPING",
+                        "--left",
+                        mcp.toAbsolutePath().toString(),
+                        "--right",
+                        mojmap.toAbsolutePath().toString(),
+                        "--classes",
+                        "--reverse-right",
+                        "--output",
+                        mergedMojangRaw.toAbsolutePath().toString()
+                });
 
-            for (MappingTree.ClassMapping classDef : mappings.getClasses()) {
-                for (MappingTree.MethodMapping methodDef : classDef.getMethods()) {
-                    methodDef.getArgs().clear();
+                MemoryMappingTree mappings = new MemoryMappingTree();
+                MappingReader.read(Files.newBufferedReader(mergedMojangRaw), mappings);
+                mappings.accept(new FieldDescWrappingVisitor(mappings, mojmap));
+
+                Files.writeString(this.forgeMappings, Tsrg2Writer.serialize(mappings), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+
+                try (MappingWriter writer = new Tiny2Writer(Files.newBufferedWriter(this.forgeMappingsTiny), true)) {
+                    mappings.accept(writer);
                 }
+                logger.info("merged mappings (InstallerTools, srg + mojmap) in " + stopwatch.stop());
             }
-
-            Files.writeString(forgeMappings, Tsrg2Writer.serialize(mappings), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-            logger.info("merged mappings (InstallerTools, srg + mojmap) in " + stopwatch.stop());
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to provide forge mappings", e);
         }
+    }
+
+    public Path getForgeMappings(boolean isTiny) {
+        if (isTiny) {
+            return this.forgeMappingsTiny;
+        }
+        return this.forgeMappings;
     }
 
     private static class FieldDescWrappingVisitor extends ForwardingMappingVisitor {

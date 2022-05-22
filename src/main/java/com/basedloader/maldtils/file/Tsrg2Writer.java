@@ -41,10 +41,6 @@ public class Tsrg2Writer {
         }
     }
 
-    private static void writeField(List<String> namespaces, MappingTree.FieldMapping def, StringBuilder builder) {
-        writeMapped('\t', namespaces, def, builder);
-    }
-
     private static void writeMapped(Character first, List<String> namespaces, MappingTreeView.ElementMappingView mapped, StringBuilder builder) {
         String[] names = namespaces.stream().map(mapped::getName).toArray(String[]::new);
 
