@@ -1,5 +1,6 @@
-package com.basedloader.maldtils;
+package com.basedloader.maldtils.mappings;
 
+import com.basedloader.maldtils.file.FileSystemUtil;
 import com.basedloader.maldtils.file.FilesUtils;
 import com.basedloader.maldtils.file.Tsrg2Writer;
 import com.basedloader.maldtils.logger.Logger;
@@ -11,6 +12,7 @@ import net.fabricmc.mappingio.adapter.ForwardingMappingVisitor;
 import net.fabricmc.mappingio.format.Tiny2Writer;
 import net.fabricmc.mappingio.tree.MappingTree;
 import net.fabricmc.mappingio.tree.MemoryMappingTree;
+import org.objectweb.asm.ClassReader;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -24,17 +26,18 @@ import java.util.*;
 public class ForgeMappingProvider {
 
     public final Path forgeMappings;
-    public final Path forgeMappingsTiny;
+    public final Path matchedForgeMappings;
+    private final MemoryMappingTree mappings;
 
     public ForgeMappingProvider(VersionMetadata versionMetadata, Path workDir, Logger logger) {
         try {
-            this.forgeMappings = workDir.resolve("mappings/full.tsrg");
-            this.forgeMappingsTiny = workDir.resolve("mappings/full.tiny");
+            this.forgeMappings = workDir.resolve("mappings/full-raw.tsrg");
+            this.matchedForgeMappings = workDir.resolve("mappings/full-matched.tiny");
             Path mergedMojangRaw = workDir.resolve("mappings/merged-raw.txt");
             Path mcp = workDir.resolve("mappings/mcp.tsrg");
             Path mojmap = workDir.resolve("mappings/mojmap.txt");
 
-            if (!Files.exists(forgeMappings) || !Files.exists(forgeMappingsTiny)) {
+            if (!Files.exists(forgeMappings)) {
                 String mcVer = versionMetadata.id();
                 Path mcpConfig = FilesUtils.downloadFile("https://maven.minecraftforge.net/de/oceanlabs/mcp/mcp_config/$it/mcp_config-$it.zip".replace("$it", mcVer), workDir.resolve("mappings/mcp_config-" + mcVer + ".zip"));
                 Files.write(mcp, FilesUtils.unpack(mcpConfig, "config/joined.tsrg"));
@@ -63,20 +66,51 @@ public class ForgeMappingProvider {
                 mappings.accept(new FieldDescWrappingVisitor(mappings, mojmap));
 
                 Files.writeString(this.forgeMappings, Tsrg2Writer.serialize(mappings), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-
-                try (MappingWriter writer = new Tiny2Writer(Files.newBufferedWriter(this.forgeMappingsTiny), true)) {
-                    mappings.accept(writer);
-                }
+                this.mappings = mappings;
                 logger.info("merged mappings (InstallerTools, srg + mojmap) in " + stopwatch.stop());
+            } else {
+                MemoryMappingTree mappings = new MemoryMappingTree();
+                MappingReader.read(Files.newBufferedReader(mergedMojangRaw), mappings);
+                mappings.accept(new FieldDescWrappingVisitor(mappings, mojmap));
+                this.mappings = mappings;
             }
         } catch (IOException e) {
             throw new RuntimeException("Failed to provide forge mappings", e);
         }
     }
 
-    public Path getForgeMappings(boolean isTiny) {
-        if (isTiny) {
-            return this.forgeMappingsTiny;
+    public void matchMappings(Path forge, Logger logger) throws IOException {
+        if (!Files.exists(this.matchedForgeMappings)) {
+            logger.info("Matching mappings to forge structure");
+            MemoryMappingTree matchedMappings = new MemoryMappingTree();
+            this.mappings.accept(matchedMappings);
+
+            try (FileSystemUtil.Delegate fs = FileSystemUtil.getJarFileSystem(forge)) {
+                Path rootDir = fs.get().getPath("/");
+                Files.walk(rootDir).filter(path -> path.toString().endsWith(".class")).forEach(path -> {
+                    try {
+                        ClassReader reader = new ClassReader(Files.readAllBytes(path));
+                        MappingFillerVisitor visitor = new MappingFillerVisitor(matchedMappings);
+                        reader.accept(visitor, 0);
+                    } catch (IOException e) {
+                        throw new RuntimeException("Failed reading Forge's structure", e);
+                    }
+                });
+
+                try (MappingWriter writer = new Tiny2Writer(Files.newBufferedWriter(this.matchedForgeMappings), false)) {
+                    matchedMappings.accept(writer);
+                }
+            }
+        }
+    }
+
+    public Path getForgeMappings(boolean getMatched) {
+        if (getMatched) {
+            if (!Files.exists(this.matchedForgeMappings)) {
+                throw new RuntimeException("Tried to get matched full mappings without first supplying forge!");
+            }
+
+            return this.matchedForgeMappings;
         }
         return this.forgeMappings;
     }

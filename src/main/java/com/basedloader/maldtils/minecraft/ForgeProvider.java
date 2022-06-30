@@ -1,6 +1,6 @@
 package com.basedloader.maldtils.minecraft;
 
-import com.basedloader.maldtils.ForgeMappingProvider;
+import com.basedloader.maldtils.mappings.ForgeMappingProvider;
 import com.basedloader.maldtils.ThreadingUtils;
 import com.basedloader.maldtils.dependency.DependencyResolver;
 import com.basedloader.maldtils.file.FileSystemUtil;
@@ -27,6 +27,8 @@ public class ForgeProvider {
 
     private final DependencyResolver dependencyResolver;
     private final Logger logger;
+    private List<Path> libraries;
+    // Download the Minecraft Client & Server
     private final Path client;
     private final Path server;
     // Step 1: Strip Minecraft for FART
@@ -125,42 +127,42 @@ public class ForgeProvider {
     }
 
     private void generateSrgJars(ForgeMappingProvider mappingProvider) {
-        logger.info("Locating Libraries");
-        List<Path> paths = dependencyResolver.resolveVanillaDependencies(logger);
+        if (!Files.exists(this.clientSrg) || !Files.exists(this.serverSrg)) {
+            logger.info("Locating Libraries");
+            this.libraries = dependencyResolver.resolveVanillaDependencies(logger);
 
-        if (!Files.exists(this.clientSrg) || !Files.exists(this.serverSrg))
             logger.info("Remapping to SRG (official -> srg)");
+            // TODO: can this be faster? Ask forge team & Shedaniel
+            try {
+                // We use a trick to multi-thread this. We create a temporary mapping file in order to allow for 2 instances of FART to remap the client and server jar at the same time
+                Path serverMappingsFile = Files.createTempFile(null, ".txt");
+                Files.write(serverMappingsFile, Files.readAllBytes(mappingProvider.getForgeMappings(false)));
+                ThreadingUtils.TaskCompleter fartRemapper = ThreadingUtils.taskCompleter();
 
-        // TODO: can this be faster? Ask forge team & Shedaniel
-        try {
-            // We use a trick to multi-thread this. We create a temporary mapping file in order to allow for 2 instances of FART to remap the client and server jar at the same time
-            Path serverMappingsFile = Files.createTempFile(null, ".txt");
-            Files.write(serverMappingsFile, Files.readAllBytes(mappingProvider.getForgeMappings(false)));
-            ThreadingUtils.TaskCompleter fartRemapper = ThreadingUtils.taskCompleter();
+                // Remap Client
+                List<String> clientArgs = new ArrayList<>(List.of("--input", this.clientStripped.toAbsolutePath().toString(), "--output", this.clientSrg.toAbsolutePath().toString(), "--map", mappingProvider.getForgeMappings(false).toAbsolutePath().toString(), "--ann-fix", "--ids-fix", "--src-fix", "--record-fix"));
 
-            // Remap Client
-            List<String> clientArgs = new ArrayList<>(List.of("--input", this.clientStripped.toAbsolutePath().toString(), "--output", this.clientSrg.toAbsolutePath().toString(), "--map", mappingProvider.getForgeMappings(false).toAbsolutePath().toString(), "--ann-fix", "--ids-fix", "--src-fix", "--record-fix"));
+                for (Path path : this.libraries) {
+                    clientArgs.add("-e=" + path.toAbsolutePath());
+                }
 
-            for (Path path : paths) {
-                clientArgs.add("-e=" + path.toAbsolutePath());
+                if (!Files.exists(this.clientSrg)) {
+                    fartRemapper.add(() -> Main.main(clientArgs.toArray(String[]::new)));
+                }
+
+                // Remap Server
+                List<String> serverArgs = new ArrayList<>(clientArgs);
+                serverArgs.set(1, this.serverStripped.toAbsolutePath().toString());
+                serverArgs.set(3, this.serverSrg.toAbsolutePath().toString());
+                serverArgs.set(5, serverMappingsFile.toAbsolutePath().toString());
+                if (!Files.exists(this.serverSrg)) {
+                    fartRemapper.add(() -> Main.main(serverArgs.toArray(String[]::new)));
+                }
+
+                fartRemapper.complete();
+            } catch (IOException e) {
+                throw new RuntimeException(e);
             }
-
-            if (!Files.exists(this.clientSrg)) {
-                fartRemapper.add(() -> Main.main(clientArgs.toArray(String[]::new)));
-            }
-
-            // Remap Server
-            List<String> serverArgs = new ArrayList<>(clientArgs);
-            serverArgs.set(1, this.serverStripped.toAbsolutePath().toString());
-            serverArgs.set(3, this.serverSrg.toAbsolutePath().toString());
-            serverArgs.set(5, serverMappingsFile.toAbsolutePath().toString());
-            if (!Files.exists(this.serverSrg)) {
-                fartRemapper.add(() -> Main.main(serverArgs.toArray(String[]::new)));
-            }
-
-            fartRemapper.complete();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
         }
     }
 
@@ -270,13 +272,18 @@ public class ForgeProvider {
     }
 
     private void remapToOfficial(ForgeMappingProvider mappingProvider) {
-        this.logger.info("Remapping Forge (srg -> official)");
-        net.fabricmc.tinyremapper.Main.main(new String[]{
-                this.mergedSrgPatched.toAbsolutePath().toString(),
-                this.forge.toAbsolutePath().toString(),
-                mappingProvider.getForgeMappings(true).toAbsolutePath().toString(),
-                "right", "left"
-        });
+        try {
+            mappingProvider.matchMappings(this.mergedSrgPatched, this.logger);
+            this.logger.info("Remapping Forge (srg -> official)");
+            net.fabricmc.tinyremapper.Main.main(new String[]{
+                    this.mergedSrgPatched.toAbsolutePath().toString(),
+                    this.forge.toAbsolutePath().toString(),
+                    mappingProvider.getForgeMappings(true).toAbsolutePath().toString(),
+                    "right", "left"
+            });
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to remap Forge", e);
+        }
     }
 
     private void createExtrasJar() {
